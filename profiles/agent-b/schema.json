@@ -1,0 +1,37 @@
+{
+  "$id": "https://verana-labs.github.io/verifiable-trust-spec/schemas/v4/mcpi-agent-b-query.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCPI Agent B Query Attestation",
+  "description": "Schema for Agent B attesting a question/answer exchange in the MCPI demo.",
+  "type": "object",
+  "properties": {
+    "credentialSubject": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uri"
+        },
+        "query": {
+          "type": "string"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "responder": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "query",
+        "answer",
+        "responder",
+        "verified"
+      ]
+    }
+  }
+}

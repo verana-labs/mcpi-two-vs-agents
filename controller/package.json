@@ -1,0 +1,14 @@
+{
+  "name": "mcpi-two-vs-agents-controller",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Controller runtime for two VS agents proving MCP-I roundtrip with identity",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@kya-os/mcp-i": "1.7.13",
+    "express": "^4.21.2"
+  }
+}
