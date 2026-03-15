@@ -82,7 +82,7 @@ cd ..
 
 All onboarding scripts support `DEPLOY_MODE=k8s`.
 
-Step 1 only (deploy VS agent through Helm + start local port-forward):
+Step 1 only (deploy VS agent through Helm):
 
 ```bash
 cd /Users/mathieu/datashare/2060io/2060-demos/mcpi-two-vs-agents
@@ -97,7 +97,7 @@ DEPLOY_MODE=k8s ./scripts/onboard-agent.sh agent-a
 DEPLOY_MODE=k8s ./scripts/onboard-agent.sh agent-b
 ```
 
-Stop a profile's port-forward:
+If you need the old localhost admin bridge as a fallback, stop a profile's port-forward:
 
 ```bash
 ./scripts/stop-k8s-port-forward.sh agent-a
@@ -113,6 +113,31 @@ If you want step-by-step trust setup instead of all-in-one:
 ```
 
 Repeat for `agent-b`.
+
+For k8s mode, start controllers like this so they target the admin ingress instead of a local `kubectl port-forward`:
+
+```bash
+DEPLOY_MODE=k8s ./scripts/start-both-controllers.sh
+```
+
+To run controllers in Kubernetes instead of on your laptop:
+
+```bash
+OLLAMA_BASE_URL=https://your-current-ollama-tunnel.lhr.life ./scripts/deploy-k8s-controllers.sh
+```
+
+If your `localhost.run` Ollama URL rotates later, update the in-cluster controllers with one command:
+
+```bash
+./scripts/update-k8s-controller-ollama-url.sh https://your-new-ollama-tunnel.lhr.life
+```
+
+That creates:
+
+- Internal A: `http://mcpi-controller-a.vna-testnet-1.svc.cluster.local:4101`
+- Internal B: `http://mcpi-controller-b.vna-testnet-1.svc.cluster.local:4102`
+- External A: `https://mcpi-controller-a.testnet.verana.network`
+- External B: `https://mcpi-controller-b.testnet.verana.network`
 
 ## Demo commands in chat
 

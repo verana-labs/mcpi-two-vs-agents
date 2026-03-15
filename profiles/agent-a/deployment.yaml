@@ -1,5 +1,5 @@
 chartSource: oci://registry-1.docker.io/veranalabs/vs-agent-chart
-chartVersion: v1.7.3
+chartVersion: v1.8.1
 
 chartNamespace: vna-__NETWORK__-1
 
@@ -30,8 +30,8 @@ ingress:
   private:
     enableCors: true
     whitelistSourceRange: ""
-    tlsSecret: ""
-    host: ""
+    tlsSecret: "public.mcpi-agent-a-admin.__NETWORK__.verana.network-cert"
+    host: "mcpi-agent-a-admin.__NETWORK__.verana.network"
 
 extraEnv:
   - name: NODE_OPTIONS

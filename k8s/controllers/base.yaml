@@ -1,0 +1,309 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mcpi-controller-a-data
+  namespace: vna-__NETWORK__-1
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: csi-cinder-high-speed
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mcpi-controller-b-data
+  namespace: vna-__NETWORK__-1
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: csi-cinder-high-speed
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpi-controller-a
+  namespace: vna-__NETWORK__-1
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mcpi-controller-a
+  template:
+    metadata:
+      labels:
+        app: mcpi-controller-a
+    spec:
+      containers:
+        - name: controller
+          image: node:22-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -lc
+            - |
+              cp -R /config/. /work
+              cd /work
+              npm install --omit=dev
+              node index.js
+          env:
+            - name: PORT
+              value: "4101"
+            - name: AGENT_NAME
+              value: "MCPI Query Agent A"
+            - name: VS_AGENT_ADMIN_URL
+              value: "http://mcpi-agent-a:3000"
+            - name: PEER_MCPI_URL
+              value: "http://mcpi-controller-b:4102"
+            - name: OLLAMA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: mcpi-controller-runtime
+                  key: OLLAMA_BASE_URL
+            - name: OLLAMA_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: mcpi-controller-runtime
+                  key: OLLAMA_MODEL
+            - name: MCPI_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: mcpi-controller-runtime
+                  key: MCPI_ENV
+            - name: MCPI_AUDIT_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: mcpi-controller-runtime
+                  key: MCPI_AUDIT_ENABLED
+            - name: MCPI_IDENTITY_PATH
+              value: "/data/mcpi-identity"
+            - name: PUBLIC_BASE_URL
+              value: "https://mcpi-controller-a.__NETWORK__.verana.network"
+          ports:
+            - containerPort: 4101
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4101
+            initialDelaySeconds: 45
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4101
+            initialDelaySeconds: 90
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: controller-app
+              mountPath: /config
+              readOnly: true
+            - name: controller-work
+              mountPath: /work
+            - name: controller-data
+              mountPath: /data
+      volumes:
+        - name: controller-app
+          configMap:
+            name: mcpi-controller-app
+        - name: controller-work
+          emptyDir: {}
+        - name: controller-data
+          persistentVolumeClaim:
+            claimName: mcpi-controller-a-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpi-controller-b
+  namespace: vna-__NETWORK__-1
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mcpi-controller-b
+  template:
+    metadata:
+      labels:
+        app: mcpi-controller-b
+    spec:
+      containers:
+        - name: controller
+          image: node:22-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -lc
+            - |
+              cp -R /config/. /work
+              cd /work
+              npm install --omit=dev
+              node index.js
+          env:
+            - name: PORT
+              value: "4102"
+            - name: AGENT_NAME
+              value: "MCPI Query Agent B"
+            - name: VS_AGENT_ADMIN_URL
+              value: "http://mcpi-agent-b:3000"
+            - name: PEER_MCPI_URL
+              value: "http://mcpi-controller-a:4101"
+            - name: OLLAMA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: mcpi-controller-runtime
+                  key: OLLAMA_BASE_URL
+            - name: OLLAMA_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: mcpi-controller-runtime
+                  key: OLLAMA_MODEL
+            - name: MCPI_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: mcpi-controller-runtime
+                  key: MCPI_ENV
+            - name: MCPI_AUDIT_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: mcpi-controller-runtime
+                  key: MCPI_AUDIT_ENABLED
+            - name: MCPI_IDENTITY_PATH
+              value: "/data/mcpi-identity"
+            - name: PUBLIC_BASE_URL
+              value: "https://mcpi-controller-b.__NETWORK__.verana.network"
+          ports:
+            - containerPort: 4102
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4102
+            initialDelaySeconds: 45
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4102
+            initialDelaySeconds: 90
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: controller-app
+              mountPath: /config
+              readOnly: true
+            - name: controller-work
+              mountPath: /work
+            - name: controller-data
+              mountPath: /data
+      volumes:
+        - name: controller-app
+          configMap:
+            name: mcpi-controller-app
+        - name: controller-work
+          emptyDir: {}
+        - name: controller-data
+          persistentVolumeClaim:
+            claimName: mcpi-controller-b-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpi-controller-a
+  namespace: vna-__NETWORK__-1
+spec:
+  type: ClusterIP
+  selector:
+    app: mcpi-controller-a
+  ports:
+    - name: http
+      port: 4101
+      targetPort: 4101
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpi-controller-b
+  namespace: vna-__NETWORK__-1
+spec:
+  type: ClusterIP
+  selector:
+    app: mcpi-controller-b
+  ports:
+    - name: http
+      port: 4102
+      targetPort: 4102
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: public-mcpi-controller-a
+  namespace: vna-__NETWORK__-1
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mcpi-controller-a.__NETWORK__.verana.network
+      secretName: public.mcpi-controller-a.__NETWORK__.verana.network-cert
+  rules:
+    - host: mcpi-controller-a.__NETWORK__.verana.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcpi-controller-a
+                port:
+                  number: 4101
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: public-mcpi-controller-b
+  namespace: vna-__NETWORK__-1
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mcpi-controller-b.__NETWORK__.verana.network
+      secretName: public.mcpi-controller-b.__NETWORK__.verana.network-cert
+  rules:
+    - host: mcpi-controller-b.__NETWORK__.verana.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcpi-controller-b
+                port:
+                  number: 4102

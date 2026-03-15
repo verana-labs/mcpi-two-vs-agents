@@ -65,6 +65,32 @@ resolve_node_bin() {
 
 load_profile "${1:-}"
 
+resolve_k8s_admin_url() {
+  local rendered
+  local host
+  rendered="$(sed "s/__NETWORK__/${NETWORK}/g" "${PROFILE_DIR}/deployment.yaml")"
+  host="$(
+    printf '%s\n' "${rendered}" | awk '
+      /^[[:space:]]*private:[[:space:]]*$/ { in_private=1; next }
+      in_private && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*/ && $1 !~ /^host:/ && $1 !~ /^enableCors:/ && $1 !~ /^whitelistSourceRange:/ && $1 !~ /^tlsSecret:/ { in_private=0 }
+      in_private && /^[[:space:]]*host:[[:space:]]*/ {
+        line=$0
+        sub(/^[[:space:]]*host:[[:space:]]*"?/, "", line)
+        sub(/"?[[:space:]]*$/, "", line)
+        print line
+        exit
+      }
+    '
+  )"
+
+  if [[ -n "${host}" ]]; then
+    echo "https://${host}"
+    return 0
+  fi
+
+  return 1
+}
+
 CONTROLLER_DIR="${DEMO_ROOT}/controller"
 if [[ ! -d "${CONTROLLER_DIR}/node_modules" ]]; then
   echo "Missing controller dependencies. Run:" >&2
@@ -79,7 +105,13 @@ fi
 
 export PORT="${CONTROLLER_PORT}"
 export AGENT_NAME="${SERVICE_NAME}"
-export VS_AGENT_ADMIN_URL="http://127.0.0.1:${VS_AGENT_ADMIN_PORT}"
+if [[ -n "${VS_AGENT_ADMIN_URL:-}" ]]; then
+  export VS_AGENT_ADMIN_URL
+elif [[ "${DEPLOY_MODE}" == "k8s" ]] && K8S_ADMIN_URL="$(resolve_k8s_admin_url)"; then
+  export VS_AGENT_ADMIN_URL="${K8S_ADMIN_URL}"
+else
+  export VS_AGENT_ADMIN_URL="http://127.0.0.1:${VS_AGENT_ADMIN_PORT}"
+fi
 export PEER_MCPI_URL="${PEER_MCPI_URL}"
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
 export OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.1:8b}"
@@ -97,4 +129,5 @@ fi
 
 cd "${CONTROLLER_DIR}"
 echo "[${PROFILE_NAME}] Starting controller on :${CONTROLLER_PORT} with ${NODE_EXECUTABLE} ($("${NODE_EXECUTABLE}" --version))"
+echo "[${PROFILE_NAME}] VS Agent admin URL: ${VS_AGENT_ADMIN_URL}"
 exec "${NODE_EXECUTABLE}" src/index.js

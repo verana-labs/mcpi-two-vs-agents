@@ -83,13 +83,26 @@ load_k8s_meta_from_deployment() {
   K8S_NAMESPACE="$(sed -nE 's/^chartNamespace:[[:space:]]*//p' "${K8S_RENDERED_DEPLOYMENT}" | head -n 1)"
   K8S_RELEASE_NAME="$(sed -nE 's/^name:[[:space:]]*//p' "${K8S_RENDERED_DEPLOYMENT}" | head -n 1)"
   K8S_INGRESS_HOST="$(sed -nE 's/^[[:space:]]*host:[[:space:]]*"?([^"]*)"?/\1/p' "${K8S_RENDERED_DEPLOYMENT}" | head -n 1)"
+  K8S_PRIVATE_INGRESS_HOST="$(
+    awk '
+      /^[[:space:]]*private:[[:space:]]*$/ { in_private=1; next }
+      in_private && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*/ && $1 !~ /^host:/ && $1 !~ /^enableCors:/ && $1 !~ /^whitelistSourceRange:/ && $1 !~ /^tlsSecret:/ { in_private=0 }
+      in_private && /^[[:space:]]*host:[[:space:]]*/ {
+        line=$0
+        sub(/^[[:space:]]*host:[[:space:]]*"?/, "", line)
+        sub(/"?[[:space:]]*$/, "", line)
+        print line
+        exit
+      }
+    ' "${K8S_RENDERED_DEPLOYMENT}"
+  )"
 
   if [[ -z "${K8S_CHART_SOURCE:-}" || -z "${K8S_CHART_VERSION:-}" || -z "${K8S_NAMESPACE:-}" || -z "${K8S_RELEASE_NAME:-}" ]]; then
     echo "Could not parse chart metadata from ${K8S_RENDERED_DEPLOYMENT}" >&2
     exit 1
   fi
 
-  export K8S_CHART_SOURCE K8S_CHART_VERSION K8S_NAMESPACE K8S_RELEASE_NAME K8S_INGRESS_HOST
+  export K8S_CHART_SOURCE K8S_CHART_VERSION K8S_NAMESPACE K8S_RELEASE_NAME K8S_INGRESS_HOST K8S_PRIVATE_INGRESS_HOST
 }
 
 build_k8s_values_file() {
@@ -106,10 +119,32 @@ build_k8s_values_file() {
   export K8S_VALUES_FILE
 }
 
+get_k8s_admin_base_url() {
+  if [[ -n "${K8S_PRIVATE_INGRESS_HOST:-}" ]]; then
+    echo "https://${K8S_PRIVATE_INGRESS_HOST}"
+  else
+    echo "http://127.0.0.1:${VS_AGENT_ADMIN_PORT}"
+  fi
+}
+
+get_live_k8s_admin_base_url() {
+  local ingress_url=""
+  if [[ -n "${K8S_PRIVATE_INGRESS_HOST:-}" ]]; then
+    ingress_url="https://${K8S_PRIVATE_INGRESS_HOST}"
+    if curl -sf "${ingress_url}/v1/agent" >/dev/null 2>&1; then
+      echo "${ingress_url}"
+      return 0
+    fi
+  fi
+
+  echo "http://127.0.0.1:${VS_AGENT_ADMIN_PORT}"
+}
+
 wait_for_admin_api() {
   local retries="${1:-60}"
   local i=0
-  local admin_url="http://127.0.0.1:${VS_AGENT_ADMIN_PORT}/v1/agent"
+  local admin_url
+  admin_url="$(get_k8s_admin_base_url)/v1/agent"
   while [[ $i -lt "$retries" ]]; do
     if curl -sf "$admin_url" >/dev/null 2>&1; then
       return 0
@@ -154,6 +189,14 @@ start_k8s_port_forward() {
 }
 
 ensure_k8s_port_forward() {
+  load_k8s_meta_from_deployment
+
+  if [[ -n "${K8S_PRIVATE_INGRESS_HOST:-}" ]]; then
+    if curl -sf "$(get_k8s_admin_base_url)/v1/agent" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
   if ! curl -sf "http://127.0.0.1:${VS_AGENT_ADMIN_PORT}/v1/agent" >/dev/null 2>&1; then
     start_k8s_port_forward
   fi
@@ -178,10 +221,12 @@ NGROK_URL=${public_url}
 VS_AGENT_CONTAINER_NAME=${K8S_RELEASE_NAME}
 VS_AGENT_ADMIN_PORT=${VS_AGENT_ADMIN_PORT}
 VS_AGENT_PUBLIC_PORT=${VS_AGENT_PUBLIC_PORT}
+VS_AGENT_ADMIN_URL=$(get_live_k8s_admin_base_url)
 USER_ACC=${USER_ACC}
 K8S_NAMESPACE=${K8S_NAMESPACE}
 K8S_RELEASE_NAME=${K8S_RELEASE_NAME}
 K8S_INGRESS_HOST=${K8S_INGRESS_HOST}
+K8S_PRIVATE_INGRESS_HOST=${K8S_PRIVATE_INGRESS_HOST}
 EOF
 }
 
@@ -239,10 +284,10 @@ EOF
       --wait --timeout 300s
   fi
 
-  start_k8s_port_forward
+  ensure_k8s_port_forward
 
   local agent_did
-  agent_did="$(curl -sf "http://127.0.0.1:${VS_AGENT_ADMIN_PORT}/v1/agent" | jq -r '.publicDid // empty')"
+  agent_did="$(curl -sf "$(get_live_k8s_admin_base_url)/v1/agent" | jq -r '.publicDid // empty')"
   if [[ -z "${agent_did}" ]]; then
     echo "Could not retrieve AGENT_DID from admin API after deploy." >&2
     exit 1
@@ -254,7 +299,7 @@ EOF
   echo "  Context         : ${current_context}"
   echo "  Namespace/Rel   : ${K8S_NAMESPACE}/${K8S_RELEASE_NAME}"
   echo "  AGENT_DID       : ${agent_did}"
-  echo "  Admin API (pf)  : http://127.0.0.1:${VS_AGENT_ADMIN_PORT}"
+  echo "  Admin API       : $(get_live_k8s_admin_base_url)"
   echo "  Public API (pf) : http://127.0.0.1:${VS_AGENT_PUBLIC_PORT}"
   echo "  IDs file        : ${OUTPUT_FILE}"
 }
