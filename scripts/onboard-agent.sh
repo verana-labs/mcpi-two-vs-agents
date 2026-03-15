@@ -21,7 +21,7 @@ echo "[${PROFILE_NAME}] Running Step 02: obtain ECS credentials"
 if [[ "${DEPLOY_MODE}" == "k8s" ]]; then
   ensure_k8s_port_forward
 fi
-run_verana_step "02-get-ecs-credentials.sh"
+"${SCRIPT_DIR}/bootstrap-ecs-trust.sh" "${PROFILE_NAME}"
 
 echo "[${PROFILE_NAME}] Running Step 03: create trust registry"
 if [[ "${DEPLOY_MODE}" == "k8s" ]]; then

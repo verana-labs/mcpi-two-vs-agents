@@ -1,0 +1,20 @@
+{
+  "name": "mcpi-two-vs-agents-didcomm-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Terminal DIDComm client for MCPI VS agents",
+  "scripts": {
+    "chat": "node src/chat.mjs"
+  },
+  "dependencies": {
+    "@2060.io/credo-ts-didcomm-user-profile": "0.1.0",
+    "@credo-ts/askar": "^0.6.3",
+    "@credo-ts/core": "^0.6.3",
+    "@credo-ts/didcomm": "^0.6.3",
+    "@credo-ts/node": "^0.6.3",
+    "@credo-ts/webvh": "^0.6.3",
+    "@openwallet-foundation/askar-nodejs": "0.4.3",
+    "@verana-labs/verre": "^0.2.4"
+  }
+}

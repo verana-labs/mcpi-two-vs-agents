@@ -30,6 +30,10 @@ The onboarding scripts here wrap `verana-demos/scripts/vs-demo` directly, preser
 mcpi-two-vs-agents/
 ├── controller/                  # Single controller app, run twice
 │   └── src/index.js
+├── didcomm-client/              # Credo-based terminal DIDComm client
+│   └── src/chat.mjs
+├── k8s/
+│   └── controllers/
 ├── profiles/
 │   ├── agent-a/
 │   │   ├── config.env
@@ -40,6 +44,8 @@ mcpi-two-vs-agents/
 │       ├── schema.json
 │       └── deployment.yaml
 └── scripts/
+    ├── bootstrap-ecs-trust.sh
+    ├── didcomm-chat.sh
     ├── onboard-agent.sh
     ├── step-01-deploy.sh
     ├── step-02-ecs.sh
@@ -97,6 +103,13 @@ DEPLOY_MODE=k8s ./scripts/onboard-agent.sh agent-a
 DEPLOY_MODE=k8s ./scripts/onboard-agent.sh agent-b
 ```
 
+To rerun just the ECS onboarding flow for an already deployed agent:
+
+```bash
+DEPLOY_MODE=k8s ./scripts/bootstrap-ecs-trust.sh agent-a
+DEPLOY_MODE=k8s ./scripts/bootstrap-ecs-trust.sh agent-b
+```
+
 If you need the old localhost admin bridge as a fallback, stop a profile's port-forward:
 
 ```bash
@@ -138,6 +151,42 @@ That creates:
 - Internal B: `http://mcpi-controller-b.vna-testnet-1.svc.cluster.local:4102`
 - External A: `https://mcpi-controller-a.testnet.verana.network`
 - External B: `https://mcpi-controller-b.testnet.verana.network`
+
+## Terminal DIDComm chat
+
+The repo includes a Credo-based terminal client that:
+
+- verifies the agent trust chain with `verre`
+- connects using a VS Agent invitation
+- exchanges DIDComm messages in a terminal session
+
+For the current interop, use the legacy `did:web` invitation form:
+
+```bash
+cd /Users/mathieu/datashare/2060io/mcpi-two-vs-agents
+
+# 1) Create a public endpoint for the local DIDComm client
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:4040 nokey@localhost.run
+
+# 2) In another terminal, connect to Agent A
+CLIENT_PUBLIC_ENDPOINT=https://<current-lhr-life-url> \
+CLIENT_LISTEN_PORT=4040 \
+DEPLOY_MODE=k8s \
+./scripts/didcomm-chat.sh agent-a --legacy
+```
+
+One-shot examples:
+
+```bash
+CLIENT_PUBLIC_ENDPOINT=https://<current-lhr-life-url> CLIENT_LISTEN_PORT=4040 DEPLOY_MODE=k8s \
+./scripts/didcomm-chat.sh agent-a --legacy --message '/whoami'
+
+CLIENT_PUBLIC_ENDPOINT=https://<current-lhr-life-url> CLIENT_LISTEN_PORT=4040 DEPLOY_MODE=k8s \
+./scripts/didcomm-chat.sh agent-a --legacy --message 'hello'
+
+CLIENT_PUBLIC_ENDPOINT=https://<current-lhr-life-url> CLIENT_LISTEN_PORT=4040 DEPLOY_MODE=k8s \
+./scripts/didcomm-chat.sh agent-a --legacy --message '/ask what is mcp-i?'
+```
 
 ## Demo commands in chat
 
