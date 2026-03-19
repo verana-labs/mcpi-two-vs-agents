@@ -2,6 +2,10 @@
 
 This demo creates **two VS agents** (Agent A and Agent B), gives each one a **testnet trust stack** (Organization credential, Service credential, Trust Registry), and proves an **MCP-I roundtrip** where one agent queries the other and verifies identity proof.
 
+For a fuller explanation of what the current demo proves, what it does **not** prove, and the target paper-aligned architecture, read:
+
+- [docs/ARCHITECTURE.md](/Users/mathieu/datashare/2060io/mcpi-two-vs-agents/docs/ARCHITECTURE.md)
+
 ## Why this shape
 
 The VS Agent API supports message exchange and invitation creation, but there is no direct admin endpoint for importing another agent's invitation URL and auto-linking two VS agents headless.
