@@ -242,6 +242,26 @@ Success condition:
 
 - Agent A and Agent B have a real DIDComm connection record between them
 
+**Current implementation status**
+
+This step is now implemented in the spike environment:
+
+- Agent A and Agent B have a reciprocal completed VS-to-VS DIDComm connection in k8s
+- the link is created headlessly with [`scripts/link-vs-agents.sh`](/Users/mathieu/datashare/2060io/mcpi-two-vs-agents/scripts/link-vs-agents.sh)
+- Agent A exposes the status through the chat command:
+  - [`controller/src/index.js:383`](/Users/mathieu/datashare/2060io/mcpi-two-vs-agents/controller/src/index.js:383) `/peerconn`
+
+The current live link reports:
+
+- Agent A own-side connection id: `547475e5-02b0-46f9-9a93-5873d55ed56a`
+- Agent B peer-side connection id: `9e067f9a-ba48-4538-b29c-0c15be6534fc`
+
+What is still missing:
+
+- peer task traffic still runs over controller HTTP
+- no credential-gated authorization is happening inside the A-to-B DIDComm session yet
+- the direct link is visible and real, but not yet used as the trust-bearing transport for `/ask`
+
 #### 2. Route peer queries over the trusted DIDComm channel
 
 Goal:
@@ -327,6 +347,38 @@ We should not yet say:
 - MCP-I has been demonstrated as a clean extension of standard MCP.
 - Verana + VS Agent already solve the full secure agent-to-agent communication problem.
 - the current proof verification path is production-trustworthy.
+
+## Current Operational Truth
+
+Phase 3 Step 1 is now in this intermediate state:
+
+```text
+User client
+-> Agent A over DIDComm
+
+Agent A
+-> has a direct DIDComm connection to Agent B
+-> can report that connection with /peerconn
+
+But /ask still does:
+Controller A
+-> HTTP /mcpi/* to Controller B
+-> proof verification in controller layer
+```
+
+So the demo now proves:
+
+- direct agent-to-agent DIDComm connectivity exists
+- but it does not yet prove that the peer workload itself rides that channel
+
+There is also a separate unresolved trust issue on the public service DID:
+
+- the public invitation uses `did:webvh`
+- terminal-client trust resolution currently returns `invalid`
+- the deployment is not serving the `did:webvh` material expected by the resolver, including `did.jsonl`
+
+That issue affects the ability to claim externally verified service trust from the terminal client.
+It does **not** invalidate the fact that the live VS Agents now hold a direct completed DIDComm connection to each other inside the cluster.
 
 ## Decision Rule For Future Work
 

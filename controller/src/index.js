@@ -16,6 +16,8 @@ const config = {
   port: asInt(process.env.PORT, 4101),
   agentName: process.env.AGENT_NAME || "MCPI VS Agent",
   vsAgentAdminUrl: process.env.VS_AGENT_ADMIN_URL || "http://127.0.0.1:3100",
+  peerVsAgentAdminUrl: process.env.PEER_VS_AGENT_ADMIN_URL || "",
+  peerVsAgentLabel: process.env.PEER_VS_AGENT_LABEL || "",
   peerMcpiUrl: process.env.PEER_MCPI_URL || "",
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
   ollamaModel: process.env.OLLAMA_MODEL || "llama3.1:8b",
@@ -74,6 +76,103 @@ async function fetchVsDid() {
     }
   } catch (_error) {
     // VS Agent might be starting up; keep previous value.
+  }
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url)
+  if (!response.ok) {
+    const responseText = await response.text()
+    throw new Error(`Request failed (${response.status}) for ${url}: ${responseText}`)
+  }
+  return await response.json()
+}
+
+function selectLatestConnection(records) {
+  if (!Array.isArray(records) || records.length === 0) return null
+  return records
+    .slice()
+    .sort((left, right) => {
+      const leftTs = Date.parse(left?.updatedAt || left?.createdAt || 0)
+      const rightTs = Date.parse(right?.updatedAt || right?.createdAt || 0)
+      return leftTs - rightTs
+    })
+    .at(-1)
+}
+
+async function getDirectPeerDidcommStatus() {
+  if (!config.peerVsAgentAdminUrl) {
+    return {
+      configured: false,
+      connected: false,
+      reason: "PEER_VS_AGENT_ADMIN_URL is not configured",
+    }
+  }
+
+  const [ownAgent, peerAgent, ownConnections, peerConnections] = await Promise.all([
+    fetchJson(`${config.vsAgentAdminUrl}/v1/agent`),
+    fetchJson(`${config.peerVsAgentAdminUrl}/v1/agent`),
+    fetchJson(`${config.vsAgentAdminUrl}/v1/connections`),
+    fetchJson(`${config.peerVsAgentAdminUrl}/v1/connections`),
+  ])
+
+  const ownVsDid = ownAgent?.publicDid || state.vsDid
+  const peerVsDid = peerAgent?.publicDid || null
+  const peerLabel = peerAgent?.label || config.peerVsAgentLabel || "peer"
+  const ownLabel = ownAgent?.label || config.agentName
+
+  const peerSide = selectLatestConnection(
+    (peerConnections || []).filter(
+      connection =>
+        connection?.state === "completed" &&
+        connection?.invitationDid === ownVsDid &&
+        (!connection?.theirLabel || connection.theirLabel === ownLabel),
+    ),
+  )
+
+  if (!peerSide) {
+    return {
+      configured: true,
+      connected: false,
+      ownVsDid,
+      peerVsDid,
+      peerLabel,
+      reason: "No completed peer-side DIDComm connection found",
+    }
+  }
+
+  const ownSide = selectLatestConnection(
+    (ownConnections || []).filter(
+      connection =>
+        connection?.state === "completed" &&
+        connection?.theirDid === peerSide.did &&
+        (!connection?.theirLabel || connection.theirLabel === peerLabel),
+    ),
+  )
+
+  if (!ownSide) {
+    return {
+      configured: true,
+      connected: false,
+      ownVsDid,
+      peerVsDid,
+      peerLabel,
+      peerConnectionId: peerSide.id,
+      peerDid: peerSide.did,
+      reason: "Peer side is connected but own-side reciprocal connection was not found",
+    }
+  }
+
+  return {
+    configured: true,
+    connected: true,
+    ownVsDid,
+    peerVsDid,
+    peerLabel,
+    ownConnectionId: ownSide.id,
+    peerConnectionId: peerSide.id,
+    ownPeerDid: ownSide.theirDid,
+    peerOwnDid: peerSide.did,
   }
 }
 
@@ -281,6 +380,33 @@ async function handleIncomingMessage(webhookBody) {
     return
   }
 
+  if (message === "/peerconn") {
+    try {
+      const status = await getDirectPeerDidcommStatus()
+      const reply = status.connected
+        ? [
+            "Direct VS DIDComm link: connected",
+            `Peer label: ${status.peerLabel}`,
+            `Own VS DID: ${status.ownVsDid}`,
+            `Peer VS DID: ${status.peerVsDid}`,
+            `Own connection id: ${status.ownConnectionId}`,
+            `Peer connection id: ${status.peerConnectionId}`,
+          ].join("\n")
+        : [
+            "Direct VS DIDComm link: not connected",
+            `Reason: ${status.reason || "unknown"}`,
+            `Own VS DID: ${status.ownVsDid || state.vsDid || "unknown"}`,
+            `Peer VS DID: ${status.peerVsDid || "unknown"}`,
+          ].join("\n")
+      await sendVsTextMessage(connectionId, reply)
+      return
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error)
+      await sendVsTextMessage(connectionId, `Direct peer DIDComm check failed: ${messageText}`)
+      return
+    }
+  }
+
   if (message === "/help") {
     await sendVsTextMessage(
       connectionId,
@@ -288,6 +414,7 @@ async function handleIncomingMessage(webhookBody) {
         "Commands:",
         "/ask <question>  -> Ask the peer agent via MCP-I + proof verification",
         "/whoami          -> Show this agent identity",
+        "/peerconn        -> Show direct VS-to-VS DIDComm link status",
         "/help            -> Show commands",
       ].join("\n"),
     )
@@ -319,6 +446,7 @@ async function maybeSendWelcome(webhookBody, force = false) {
     "Try:",
     "- /ask what is MCP-I?",
     "- /whoami",
+    "- /peerconn",
     "- /help",
   ].join("\n")
 

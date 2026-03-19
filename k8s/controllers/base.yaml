@@ -60,6 +60,10 @@ spec:
               value: "MCPI Query Agent A"
             - name: VS_AGENT_ADMIN_URL
               value: "http://mcpi-agent-a:3000"
+            - name: PEER_VS_AGENT_ADMIN_URL
+              value: "http://mcpi-agent-b:3000"
+            - name: PEER_VS_AGENT_LABEL
+              value: "MCPI Query Agent B"
             - name: PEER_MCPI_URL
               value: "http://mcpi-controller-b:4102"
             - name: OLLAMA_BASE_URL
@@ -162,6 +166,10 @@ spec:
               value: "MCPI Query Agent B"
             - name: VS_AGENT_ADMIN_URL
               value: "http://mcpi-agent-b:3000"
+            - name: PEER_VS_AGENT_ADMIN_URL
+              value: "http://mcpi-agent-a:3000"
+            - name: PEER_VS_AGENT_LABEL
+              value: "MCPI Query Agent A"
             - name: PEER_MCPI_URL
               value: "http://mcpi-controller-a:4101"
             - name: OLLAMA_BASE_URL
