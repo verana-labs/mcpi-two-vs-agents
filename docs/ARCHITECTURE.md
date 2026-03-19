@@ -28,9 +28,11 @@ It is written to prevent over-claiming. The current demo is useful, but it does 
 Hologram or terminal DIDComm client
 -> Agent A VS Agent
 -> Controller A
+-> Agent A sends peer request over direct DIDComm to Agent B
+-> Agent B VS Agent
 -> Controller B
 -> Ollama
--> Controller B returns result + proof
+-> Controller B returns result + proof over DIDComm
 -> Controller A verifies and formats response
 -> Agent A VS Agent
 -> user client
@@ -64,9 +66,10 @@ The DIDComm-facing user path is separate:
 1. VS Agents can be deployed as Verifiable Services with ECS-backed trust onboarding.
 2. Hologram and a terminal Credo client can talk to Agent A over DIDComm.
 3. Agent A can hand a request to Controller A.
-4. Controller A can perform an MCP-I-style handshake/query against Controller B.
-5. Controller B can return answer plus proof material.
-6. Agent A can deliver the final response back to the DIDComm client.
+4. Agent A and Agent B hold a real reciprocal VS-to-VS DIDComm connection.
+5. Controller A can send a structured peer query over that DIDComm link.
+6. Controller B can return answer plus proof material over the same DIDComm link.
+7. Agent A can deliver the final response back to the DIDComm client.
 
 ### What the current demo does not prove
 
@@ -144,16 +147,17 @@ Agent A resolves Agent B DID
 
 ## Gap Analysis
 
-### Gap 1: agent-to-agent traffic is still HTTP, not DIDComm
+### Gap 1: credential-gated agent-to-agent authorization is still missing inside DIDComm
 
 Current:
 
-- Controller A calls Controller B over `/mcpi/*` HTTP
+- peer query payload now rides over the direct A-to-B DIDComm link
+- but Agent B does not yet request/present any authorization credential before answering
 
 Target:
 
-- Agent A and Agent B establish DIDComm directly
-- controller logic runs through or behind that trusted channel
+- Agent B can challenge Agent A for a credential inside the DIDComm session
+- Agent A can present it and Agent B can authorize based on that result
 
 ### Gap 2: proof verification is not trustworthy yet
 
@@ -258,9 +262,8 @@ The current live link reports:
 
 What is still missing:
 
-- peer task traffic still runs over controller HTTP
 - no credential-gated authorization is happening inside the A-to-B DIDComm session yet
-- the direct link is visible and real, but not yet used as the trust-bearing transport for `/ask`
+- proof verification and trust resolution still have separate open defects
 
 #### 2. Route peer queries over the trusted DIDComm channel
 
@@ -277,6 +280,20 @@ Possible shapes:
 Success condition:
 
 - the roundtrip between A and B is visibly anchored in the DIDComm session
+
+**Current implementation status**
+
+This step is now implemented in the spike environment:
+
+- `/ask ...` now sends a structured controller payload over the direct A-to-B DIDComm link
+- Controller B processes the peer query locally and sends result + proof back over DIDComm
+- Agent A's user-facing reply now reports:
+  - `MCPI roundtrip ... via didcomm.`
+
+What is still missing:
+
+- the DIDComm payload is a controller-defined internal envelope, not a standardized MCP or MCP-I transport
+- there is still no credential request/presentation step inside that peer exchange
 
 #### 3. Add credential-gated authorization for at least one peer action
 
@@ -350,7 +367,7 @@ We should not yet say:
 
 ## Current Operational Truth
 
-Phase 3 Step 1 is now in this intermediate state:
+Phase 3 Step 1 and Step 2 are now in this intermediate state:
 
 ```text
 User client
@@ -359,17 +376,21 @@ User client
 Agent A
 -> has a direct DIDComm connection to Agent B
 -> can report that connection with /peerconn
+-> uses that same DIDComm link for /ask
 
-But /ask still does:
-Controller A
--> HTTP /mcpi/* to Controller B
--> proof verification in controller layer
+Controller B still performs the MCP-I runtime work locally
+and proof verification still happens in controller A
 ```
 
 So the demo now proves:
 
 - direct agent-to-agent DIDComm connectivity exists
-- but it does not yet prove that the peer workload itself rides that channel
+- the peer workload can ride that channel
+
+It still does not prove:
+
+- credential-gated authorization inside the DIDComm peer session
+- clean standard MCP transport semantics
 
 There is also a separate unresolved trust issue on the public service DID:
 

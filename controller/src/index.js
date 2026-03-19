@@ -32,10 +32,14 @@ const state = {
   wellKnownHandler: null,
   vsDid: null,
   welcomedConnections: new Set(),
+  pendingPeerRequests: new Map(),
 }
 
 const app = express()
 app.use(express.json({ limit: "2mb" }))
+
+const INTERNAL_PEER_PREFIX = "[MCPI_INTERNAL]"
+const PEER_PROTOCOL_VERSION = "mcpi-didcomm-v1"
 
 function log(message, data) {
   const prefix = `[${config.agentName}]`
@@ -100,6 +104,17 @@ function selectLatestConnection(records) {
     .at(-1)
 }
 
+function sortConnectionsNewestFirst(records) {
+  if (!Array.isArray(records)) return []
+  return records
+    .slice()
+    .sort((left, right) => {
+      const leftTs = Date.parse(left?.updatedAt || left?.createdAt || 0)
+      const rightTs = Date.parse(right?.updatedAt || right?.createdAt || 0)
+      return rightTs - leftTs
+    })
+}
+
 async function getDirectPeerDidcommStatus() {
   if (!config.peerVsAgentAdminUrl) {
     return {
@@ -121,45 +136,47 @@ async function getDirectPeerDidcommStatus() {
   const peerLabel = peerAgent?.label || config.peerVsAgentLabel || "peer"
   const ownLabel = ownAgent?.label || config.agentName
 
-  const peerSide = selectLatestConnection(
-    (peerConnections || []).filter(
-      connection =>
-        connection?.state === "completed" &&
-        connection?.invitationDid === ownVsDid &&
-        (!connection?.theirLabel || connection.theirLabel === ownLabel),
-    ),
-  )
-
-  if (!peerSide) {
-    return {
-      configured: true,
-      connected: false,
-      ownVsDid,
-      peerVsDid,
-      peerLabel,
-      reason: "No completed peer-side DIDComm connection found",
-    }
-  }
-
-  const ownSide = selectLatestConnection(
+  const ownCandidates = sortConnectionsNewestFirst(
     (ownConnections || []).filter(
       connection =>
         connection?.state === "completed" &&
-        connection?.theirDid === peerSide.did &&
         (!connection?.theirLabel || connection.theirLabel === peerLabel),
     ),
   )
 
-  if (!ownSide) {
+  const peerCandidates = sortConnectionsNewestFirst(
+    (peerConnections || []).filter(
+      connection =>
+        connection?.state === "completed" &&
+        (!connection?.theirLabel || connection.theirLabel === ownLabel),
+    ),
+  )
+
+  let ownSide = null
+  let peerSide = null
+  for (const ownCandidate of ownCandidates) {
+    const matchedPeer = peerCandidates.find(
+      peerCandidate =>
+        (ownCandidate?.theirDid && peerCandidate?.did && ownCandidate.theirDid === peerCandidate.did) ||
+        (ownCandidate?.did && peerCandidate?.theirDid && ownCandidate.did === peerCandidate.theirDid) ||
+        (ownCandidate?.invitationDid && peerVsDid && ownCandidate.invitationDid === peerVsDid) ||
+        (peerCandidate?.invitationDid && ownVsDid && peerCandidate.invitationDid === ownVsDid),
+    )
+    if (matchedPeer) {
+      ownSide = ownCandidate
+      peerSide = matchedPeer
+      break
+    }
+  }
+
+  if (!ownSide || !peerSide) {
     return {
       configured: true,
       connected: false,
       ownVsDid,
       peerVsDid,
       peerLabel,
-      peerConnectionId: peerSide.id,
-      peerDid: peerSide.did,
-      reason: "Peer side is connected but own-side reciprocal connection was not found",
+      reason: "No reciprocal completed DIDComm connection pair found",
     }
   }
 
@@ -192,6 +209,28 @@ async function sendVsTextMessage(connectionId, content) {
   if (!response.ok) {
     const responseText = await response.text()
     throw new Error(`VS Agent message send failed (${response.status}): ${responseText}`)
+  }
+}
+
+async function sendVsPeerEnvelope(connectionId, envelope) {
+  const encoded = Buffer.from(JSON.stringify(envelope), "utf8").toString("base64url")
+  await sendVsTextMessage(connectionId, `${INTERNAL_PEER_PREFIX}${encoded}`)
+}
+
+function parseVsPeerEnvelope(content) {
+  if (typeof content !== "string" || !content.startsWith(INTERNAL_PEER_PREFIX)) {
+    return null
+  }
+
+  try {
+    const encoded = content.slice(INTERNAL_PEER_PREFIX.length)
+    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))
+    if (parsed?.protocol !== PEER_PROTOCOL_VERSION || typeof parsed?.kind !== "string") {
+      return null
+    }
+    return parsed
+  } catch (_error) {
+    return null
   }
 }
 
@@ -234,7 +273,68 @@ async function generateLocalAnswer(question, requester) {
   }
 }
 
-async function callPeerWithMcpi(question) {
+function buildHandshakeRequest(ownIdentity, audience) {
+  return {
+    nonce: crypto.randomUUID(),
+    audience,
+    timestamp: Math.floor(Date.now() / 1000),
+    clientDid: state.vsDid || ownIdentity.did,
+    clientInfo: {
+      name: config.agentName,
+      version: "0.1.0",
+      platform: "vs-agent-controller",
+    },
+  }
+}
+
+async function performLocalHandshake(handshakeRequest) {
+  const handshake = await state.runtime.handleHandshake(handshakeRequest || {})
+  if (!handshake?.sessionId) {
+    throw new Error("Runtime handshake did not return sessionId")
+  }
+  return handshake
+}
+
+async function executeLocalMcpiQuery(sessionId, question, requester) {
+  const session = state.runtime.getSession(sessionId)
+  if (!session) {
+    throw new Error(`session ${sessionId} not found`)
+  }
+
+  const nonce = await state.runtime.issueNonce(sessionId)
+  const result = await state.runtime.processToolCall(
+    "peer-answer",
+    { question, requester },
+    async (args) => {
+      const answer = await generateLocalAnswer(args.question, args.requester)
+      return {
+        answer,
+        question: args.question,
+        responder: config.agentName,
+        generatedAt: new Date().toISOString(),
+      }
+    },
+    {
+      ...session,
+      nonce,
+    },
+  )
+
+  const proof = state.runtime.getLastProof()
+  const identity = await state.runtime.getIdentity()
+
+  return {
+    result,
+    proof,
+    responder: {
+      agentName: config.agentName,
+      mcpiDid: identity.did,
+      vsDid: state.vsDid,
+    },
+  }
+}
+
+async function callPeerWithMcpiOverHttp(question) {
   if (!config.peerMcpiUrl) {
     throw new Error("PEER_MCPI_URL is not configured")
   }
@@ -251,23 +351,18 @@ async function callPeerWithMcpi(question) {
     // Not fatal: handshake can still work without explicit peer identity bootstrap.
   }
 
-  const handshakeRequest = {
-    nonce: crypto.randomUUID(),
-    audience: (() => {
+  const handshakeRequest = buildHandshakeRequest(
+    ownIdentity,
+    (() => {
       try {
         return new URL(config.peerMcpiUrl).host
       } catch (_error) {
         return config.peerMcpiUrl
       }
     })(),
-    timestamp: Math.floor(Date.now() / 1000),
-    clientDid: state.vsDid || ownIdentity.did,
-    agentDid: peerIdentity?.mcpiDid,
-    clientInfo: {
-      name: config.agentName,
-      version: "0.1.0",
-      platform: "vs-agent-controller",
-    },
+  )
+  if (peerIdentity?.mcpiDid) {
+    handshakeRequest.agentDid = peerIdentity.mcpiDid
   }
 
   const handshakeResponse = await fetch(`${config.peerMcpiUrl}/mcpi/handshake`, {
@@ -322,7 +417,145 @@ async function callPeerWithMcpi(question) {
     handshake,
     payload,
     peerIdentity,
+    transport: "http",
   }
+}
+
+function awaitPeerEnvelopeResponse(requestId, timeoutMs = 45000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      state.pendingPeerRequests.delete(requestId)
+      reject(new Error(`Timed out waiting for peer DIDComm response for ${requestId}`))
+    }, timeoutMs)
+    timer.unref?.()
+
+    state.pendingPeerRequests.set(requestId, {
+      resolve,
+      reject,
+      timer,
+    })
+  })
+}
+
+function settlePeerEnvelopeResponse(requestId, result, error) {
+  const pending = state.pendingPeerRequests.get(requestId)
+  if (!pending) return false
+  state.pendingPeerRequests.delete(requestId)
+  clearTimeout(pending.timer)
+  if (error) {
+    pending.reject(error)
+  } else {
+    pending.resolve(result)
+  }
+  return true
+}
+
+async function callPeerWithMcpiOverDidcomm(question, peerStatus) {
+  if (!peerStatus?.connected || !peerStatus?.ownConnectionId) {
+    throw new Error("Direct peer DIDComm link is not connected")
+  }
+
+  const ownIdentity = await state.runtime.getIdentity()
+  const requestId = crypto.randomUUID()
+  const handshakeRequest = buildHandshakeRequest(ownIdentity, peerStatus.peerVsDid || peerStatus.peerLabel || "peer")
+
+  const waitForResponse = awaitPeerEnvelopeResponse(requestId)
+  try {
+    await sendVsPeerEnvelope(peerStatus.ownConnectionId, {
+      protocol: PEER_PROTOCOL_VERSION,
+      kind: "query",
+      requestId,
+      question,
+      requester: {
+        agentName: config.agentName,
+        mcpiDid: ownIdentity.did,
+        vsDid: state.vsDid,
+      },
+      handshakeRequest,
+      sentAt: new Date().toISOString(),
+    })
+  } catch (error) {
+    settlePeerEnvelopeResponse(requestId, null, error instanceof Error ? error : new Error(String(error)))
+    throw error
+  }
+
+  const responseEnvelope = await waitForResponse
+  if (responseEnvelope?.kind === "error") {
+    throw new Error(responseEnvelope.error || "Peer returned an unspecified DIDComm error")
+  }
+  if (responseEnvelope?.kind !== "response") {
+    throw new Error(`Unexpected peer DIDComm envelope kind: ${responseEnvelope?.kind || "unknown"}`)
+  }
+  if (!responseEnvelope.payload?.result || !responseEnvelope.payload?.proof) {
+    throw new Error("Peer DIDComm response did not include both result and proof")
+  }
+
+  let verified = false
+  try {
+    verified = await state.runtime.verifyProof(responseEnvelope.payload.result, responseEnvelope.payload.proof)
+  } catch (_error) {
+    verified = false
+  }
+
+  return {
+    verified,
+    handshake: responseEnvelope.handshake,
+    payload: responseEnvelope.payload,
+    peerIdentity: responseEnvelope.payload?.responder || null,
+    transport: "didcomm",
+  }
+}
+
+async function callPeerWithMcpi(question) {
+  const peerStatus = await getDirectPeerDidcommStatus().catch(() => null)
+  if (peerStatus?.connected) {
+    return await callPeerWithMcpiOverDidcomm(question, peerStatus)
+  }
+  return await callPeerWithMcpiOverHttp(question)
+}
+
+async function handlePeerEnvelope(connectionId, envelope) {
+  const peerStatus = await getDirectPeerDidcommStatus()
+  if (!peerStatus?.connected || peerStatus.ownConnectionId !== connectionId) {
+    log("Ignoring internal peer envelope from non-peer connection", { connectionId, kind: envelope?.kind })
+    return
+  }
+
+  if (envelope.kind === "query") {
+    try {
+      const handshake = await performLocalHandshake(envelope.handshakeRequest || {})
+      const payload = await executeLocalMcpiQuery(handshake.sessionId, String(envelope.question || ""), envelope.requester)
+      await sendVsPeerEnvelope(connectionId, {
+        protocol: PEER_PROTOCOL_VERSION,
+        kind: "response",
+        requestId: envelope.requestId,
+        handshake,
+        payload,
+        sentAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error)
+      await sendVsPeerEnvelope(connectionId, {
+        protocol: PEER_PROTOCOL_VERSION,
+        kind: "error",
+        requestId: envelope.requestId,
+        error: messageText,
+        sentAt: new Date().toISOString(),
+      })
+    }
+    return
+  }
+
+  if (envelope.kind === "response" || envelope.kind === "error") {
+    settlePeerEnvelopeResponse(
+      envelope.requestId,
+      envelope,
+      envelope.kind === "error" ? new Error(envelope.error || "Peer DIDComm error") : null,
+    )
+    return
+  }
+
+  log("Ignoring unsupported internal peer envelope", { kind: envelope.kind })
 }
 
 async function handleIncomingMessage(webhookBody) {
@@ -334,6 +567,11 @@ async function handleIncomingMessage(webhookBody) {
   }
 
   const message = content.trim()
+  const peerEnvelope = parseVsPeerEnvelope(message)
+  if (peerEnvelope) {
+    await handlePeerEnvelope(connectionId, peerEnvelope)
+    return
+  }
 
   if (message.startsWith("/ask ")) {
     const question = message.slice(5).trim()
@@ -353,7 +591,7 @@ async function handleIncomingMessage(webhookBody) {
       const verificationText = roundtrip.verified ? "verified" : "NOT verified"
 
       const reply = [
-        `MCPI roundtrip ${verificationText}.`,
+        `MCPI roundtrip ${verificationText} via ${roundtrip.transport || "unknown"}.`,
         `Peer MCP-I DID: ${responderDid}`,
         `Proof DID: ${proofDid}`,
         `Answer: ${resultText}`,
@@ -429,6 +667,15 @@ async function maybeSendWelcome(webhookBody, force = false) {
   const connectionId = getConnectionId(webhookBody)
   if (!connectionId) return
 
+  try {
+    const peerStatus = await getDirectPeerDidcommStatus()
+    if (peerStatus?.connected && peerStatus.ownConnectionId === connectionId) {
+      return
+    }
+  } catch (_error) {
+    // Ignore transient peer status lookup failures during startup.
+  }
+
   if (!force) {
     const stateValue = webhookBody?.state
     if (typeof stateValue === "string" && stateValue.toLowerCase() !== "completed") {
@@ -477,7 +724,7 @@ app.get("/mcpi/identity", async (_req, res) => {
 
 app.post("/mcpi/handshake", async (req, res) => {
   try {
-    const response = await state.runtime.handleHandshake(req.body || {})
+    const response = await performLocalHandshake(req.body || {})
     res.json(response)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -502,37 +749,8 @@ app.post("/mcpi/query", async (req, res) => {
   }
 
   try {
-    const nonce = await state.runtime.issueNonce(sessionId)
-    const result = await state.runtime.processToolCall(
-      "peer-answer",
-      { question, requester },
-      async (args) => {
-        const answer = await generateLocalAnswer(args.question, args.requester)
-        return {
-          answer,
-          question: args.question,
-          responder: config.agentName,
-          generatedAt: new Date().toISOString(),
-        }
-      },
-      {
-        ...session,
-        nonce,
-      },
-    )
-
-    const proof = state.runtime.getLastProof()
-    const identity = await state.runtime.getIdentity()
-
-    res.json({
-      result,
-      proof,
-      responder: {
-        agentName: config.agentName,
-        mcpiDid: identity.did,
-        vsDid: state.vsDid,
-      },
-    })
+    const payload = await executeLocalMcpiQuery(sessionId, question, requester)
+    res.json(payload)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     res.status(500).json({ error: message })

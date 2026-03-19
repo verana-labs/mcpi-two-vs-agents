@@ -6,25 +6,27 @@ For a fuller explanation of what the current demo proves, what it does **not** p
 
 - [docs/ARCHITECTURE.md](/Users/mathieu/datashare/2060io/mcpi-two-vs-agents/docs/ARCHITECTURE.md)
 
-## Phase 3 Step 1 status
+## Phase 3 status
 
-Phase 3 Step 1 is now implemented:
+Phase 3 Step 1 and Step 2 are now implemented:
 
 - Agent A and Agent B have a **real direct VS-to-VS DIDComm connection** in k8s.
 - Agent A can report that link in chat with `/peerconn`.
 - The link is created headlessly with [`scripts/link-vs-agents.sh`](/Users/mathieu/datashare/2060io/mcpi-two-vs-agents/scripts/link-vs-agents.sh).
+- `/ask ...` now rides that direct A-to-B DIDComm channel instead of controller-to-controller HTTP.
 
 What this proves:
 
 - the two deployed VS Agents can be linked directly to each other
 - the demo no longer depends only on user-to-agent DIDComm
 - we can inspect the live A-to-B DIDComm connection from inside Agent A
+- the peer query/response now runs over the A-to-B DIDComm link
 
 What this does **not** prove yet:
 
-- peer queries are still carried over controller HTTP, not over the A-to-B DIDComm channel
 - public trust verification for the service DID is still failing in the terminal client
 - MCP-I proof verification is still returning `NOT verified`
+- no credential-gated authorization is happening inside the A-to-B DIDComm session yet
 
 ## Why this shape
 
@@ -33,9 +35,10 @@ The VS Agent API supports message exchange and invitation creation, but there is
 So this demo keeps VS Agent as the trust and DIDComm anchor, and implements MCP-I agent-to-agent calls in the controller layer:
 
 1. User talks to Agent A through VS Agent webhook.
-2. Agent A controller does MCP-I handshake/query with Agent B controller.
-3. Agent B returns result + proof.
-4. Agent A verifies proof and returns a signed/verified status to the user.
+2. Controller A sends a structured peer request over Agent A's direct DIDComm connection to Agent B.
+3. Agent B forwards that DIDComm message into Controller B.
+4. Controller B returns result + proof back over the same DIDComm channel.
+5. Controller A verifies proof and returns status to the user.
 
 ## What was taken from `verana-demos`
 
@@ -199,6 +202,10 @@ The current live direct link is exposed through `/peerconn` and should report:
 - Agent A own connection id: `547475e5-02b0-46f9-9a93-5873d55ed56a`
 - Agent B peer connection id: `9e067f9a-ba48-4538-b29c-0c15be6534fc`
 
+With that link in place, `/ask ...` now returns:
+
+- `MCPI roundtrip ... via didcomm.`
+
 ## Terminal DIDComm chat
 
 The repo includes a Credo-based terminal client that:
@@ -250,7 +257,7 @@ Once a user is connected to an agent:
 - `/peerconn`
 - `/ask what is MCP-I?`
 
-`/ask ...` executes the MCP-I roundtrip to the peer agent and returns verification status.
+`/ask ...` executes the MCP-I roundtrip to the peer agent over the direct A-to-B DIDComm link and returns verification status.
 
 `/peerconn` reports whether Agent A can see the direct VS-to-VS DIDComm link to Agent B.
 
