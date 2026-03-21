@@ -73,6 +73,7 @@ mcpi-two-vs-agents/
 └── scripts/
     ├── bootstrap-ecs-trust.sh
     ├── didcomm-chat.sh
+    ├── inspect-vs-trust.sh
     ├── onboard-agent.sh
     ├── step-01-deploy.sh
     ├── step-02-ecs.sh
@@ -242,11 +243,26 @@ CLIENT_PUBLIC_ENDPOINT=https://<current-lhr-life-url> CLIENT_LISTEN_PORT=4040 DE
 ./scripts/didcomm-chat.sh agent-a --allow-untrusted --message '/ask what is mcp-i?'
 ```
 
+Trust inspection helper:
+
+```bash
+./scripts/inspect-vs-trust.sh https://mcpi-agent-a.testnet.verana.network
+./scripts/inspect-vs-trust.sh https://mcpi-agent-a.testnet.verana.network --skip-digest-sri
+```
+
+What it shows:
+
+- the DID Document and linked VP endpoints
+- the service VP and referenced `JsonSchemaCredential`
+- raw vs canonicalized schema digests from `idx` and `api`
+- the final `verre` resolution result, with or without `skipDigestSRICheck`
+- exact `curl`/`jq` commands you can replay manually
+
 Known limitation:
 
-- the terminal client currently reports both `did:webvh` and `did:web` trust resolution as `invalid`
-- the public invitation still works for DIDComm when `--allow-untrusted` is used
-- the likely immediate cause is that the service is not serving the public material expected by the `did:webvh` resolver, including `did.jsonl`
+- strict trust validation depends on the current ECS onboarding state of the specific VS agent
+- after re-running `DEPLOY_MODE=k8s ./scripts/step-02-ecs.sh <agent-name>`, strict `verre` validation should pass for that agent
+- Hologram currently resolves trust with `skipDigestSRICheck` enabled, so its behavior may differ from strict terminal validation when testnet schema-processing issues resurface
 
 ## Demo commands in chat
 
