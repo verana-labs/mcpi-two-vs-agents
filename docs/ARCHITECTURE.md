@@ -392,14 +392,25 @@ It still does not prove:
 - credential-gated authorization inside the DIDComm peer session
 - clean standard MCP transport semantics
 
-There is also a separate unresolved trust issue on the public service DID:
+There was a separate public-service trust issue on testnet, but the state is now more precise:
 
-- the public invitation uses `did:webvh`
-- terminal-client trust resolution currently returns `invalid`
-- the deployment is not serving the `did:webvh` material expected by the resolver, including `did.jsonl`
+- the old ECS demo `JsonSchemaCredential` objects were inconsistent with strict trust resolution
+- Ariel reset the ECS demo registry to newer schema refs, which fixed the ECS-side data for newly onboarded or freshly re-onboarded agents
+- stale agents still remained invalid until their ECS onboarding was rerun, because their service credentials and issuer permissions were tied to the old schema context
+- after rerunning ECS onboarding, strict terminal trust resolution now succeeds for Agent A
 
-That issue affects the ability to claim externally verified service trust from the terminal client.
-It does **not** invalidate the fact that the live VS Agents now hold a direct completed DIDComm connection to each other inside the cluster.
+So the current conclusion is:
+
+- the immediate Agent A trust-resolution problem is fixed
+- the fix was a combination of ECS demo-registry reset plus fresh agent onboarding
+- the broader network-wide durable fix still depends on testnet upgrading to Verana `v0.10.x` and the full spec-v4 schema/trust path
+
+That matters because the current healthy result still depends on:
+
+- the ECS demo registry having been reset correctly
+- the individual VS agent having been freshly re-onboarded against that reset state
+
+Until testnet is on the newer chain version and schema/trust behavior is consistent by default, strict trust resolution should still be treated as sensitive to the exact onboarding and registry state.
 
 ## Decision Rule For Future Work
 

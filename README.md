@@ -264,6 +264,12 @@ Known limitation:
 - after re-running `DEPLOY_MODE=k8s ./scripts/step-02-ecs.sh <agent-name>`, strict `verre` validation should pass for that agent
 - Hologram currently resolves trust with `skipDigestSRICheck` enabled, so its behavior may differ from strict terminal validation when testnet schema-processing issues resurface
 
+Current testnet trust-resolution note:
+
+- Ariel's ECS reset fixed the demo ECS `JsonSchemaCredential` data for newly onboarded or freshly re-onboarded agents
+- that fix was necessary, but not sufficient for already-issued service credentials: stale agents still need `step-02-ecs.sh` rerun so issuer permissions and freshly issued ECS credentials line up with the new schema refs
+- the broader "fixed for good" state still depends on testnet moving to Verana `v0.10.x` and the full spec-v4 trust/schema path, so strict trust resolution does not rely on per-registry resets or temporary client-side relaxations
+
 ## Demo commands in chat
 
 Once a user is connected to an agent:
