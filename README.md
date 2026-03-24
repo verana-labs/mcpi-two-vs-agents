@@ -5,6 +5,7 @@ This demo creates **two VS agents** (Agent A and Agent B), gives each one a **te
 For a fuller explanation of what the current demo proves, what it does **not** prove, and the target paper-aligned architecture, read:
 
 - [docs/ARCHITECTURE.md](/Users/mathieu/datashare/2060io/mcpi-two-vs-agents/docs/ARCHITECTURE.md)
+- [docs/MCP_VS_AGENT_RELATIONSHIP.md](/Users/mathieu/datashare/2060io/mcpi-two-vs-agents/docs/MCP_VS_AGENT_RELATIONSHIP.md)
 
 ## Phase 3 status
 
